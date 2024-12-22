@@ -83,7 +83,10 @@ LANGUAGES = [
         name="Toki Pona",
         iso="tok",
         funny_words={},
-        replacement_rules=[],
+        replacement_rules=[
+            ('n', 'N'),
+            ('Na', 'na'), ('Ne', 'ne'), ('Ni', 'ni'), ('No', 'no'), ('Nu', 'nu'),
+        ],
         multigraphs=[],
         silent_segments=[],
     ),
@@ -116,11 +119,17 @@ def segment_word(lang: LanguageSpecification, word: str):
     return segments
 
 
-def segment_words(lang: LanguageSpecification, sentence: str):
+def segment_words(lang: LanguageSpecification, sentence: str, word_break: bool = True):
     words = [lang.funny_words.get(w, w) for w in whitespace_words(sentence)]
+
     word_segments = []
-    for word in words:
-        word_segments.append(segment_word(lang, word))
+    if word_break:
+        for word in words:
+            word_segments.append(segment_word(lang, word))
+    else:
+        word_segments.append([])
+        for word in words:
+            word_segments[0] += segment_word(lang, word)
 
     return word_segments
 
@@ -141,11 +150,11 @@ def load_sentences(lang: LanguageSpecification):
     return sentences
 
 
-def all_segmented_words(lang: LanguageSpecification):
+def all_segmented_words(lang: LanguageSpecification, word_breaks: bool = True):
     sentences = load_sentences(lang)
     out: list[list[str]] = []
     for s in sentences:
-        out += segment_words(lang, s)
+        out += segment_words(lang, s, word_breaks)
     return out
 
 
@@ -232,7 +241,7 @@ def show_segmentation():
         print()
 
 
-def show_bytes_per_segment():
+def show_bytes_per_segment(word_breaks: bool):
     data = [
         (lang, [])
         for lang in LANGUAGES
@@ -242,7 +251,7 @@ def show_bytes_per_segment():
         for lang, bytes_per_segment in data:
             print(lang.name)
 
-            segmented_words = all_segmented_words(lang)
+            segmented_words = all_segmented_words(lang, word_breaks)
 
             num_segments = 0
             segment_freqs = {}
@@ -275,15 +284,17 @@ def show_bytes_per_segment():
     plt.show()
 
 
-def show_total_bytes():
+def show_total_bytes(word_breaks: bool):
     data = [
         (lang, [])
         for lang in LANGUAGES
     ]
 
-    for n in range(0, MAX_N):
+    for n in range(6, 7):
+        print(f"n = {n}")
+        print()
         for lang, total_bytes_list in data:
-            segmented_words = all_segmented_words(lang)
+            segmented_words = all_segmented_words(lang, word_breaks)
 
             ss = SegmentSummary()
             ss.add_all(segmented_words, n)
@@ -293,6 +304,20 @@ def show_total_bytes():
                 total_bytes += ss.bytes(segments, n)
             print(lang.name, round(total_bytes))
             total_bytes_list.append(total_bytes)
+
+            print(f"Average possible continuations: {statistics.mean([len(conts) for conts in ss.ngram_continuations.values()]):.2f}")
+            # bs = []
+            # for context, continuations in ss.ngram_continuations.items():
+            #     total = sum(continuations.values())
+            #     to_print = False
+            #     for count in continuations.values():
+            #         b = count*-math.log2(count/total)
+            #         bs.append(b)
+            #         if b > 5:
+            #             to_print = True
+            #     if to_print:
+            #         print(context, continuations)
+            # print([round(b, 2) for b in sorted(bs) if b != 0])
 
         print()
 
