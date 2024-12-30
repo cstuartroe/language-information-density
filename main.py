@@ -236,20 +236,17 @@ class Translation:
 
         return cls(language=language, edition_name=edition_name.replace("_", " "), chapters=chapters)
 
-    def all_verses(self, skip_verses: list[VerseID]):
+    def all_verses(self):
         for chapter in self.chapters.values():
             for verse in chapter.verses:
                 if verse is None:
                     continue
 
-                if verse.id in skip_verses:
-                    continue
-
                 yield verse
 
-    def segments(self, skip_verses: list[VerseID], word_breaks: bool = True):
+    def segments(self, word_breaks: bool = True):
         words: list[list[Segment]] = []
-        for verse in self.all_verses(skip_verses):
+        for verse in self.all_verses():
             if word_breaks:
                 words += verse.segmented_words()
             else:
@@ -257,23 +254,52 @@ class Translation:
         return words
 
 
-def load_all_translations():
+@dataclass
+class SelectionCriteria:
+    languages: list[str] | None = None
+    translations: list[str] | None = None
+    chapters: list[str] | None = None
+    skip_verses: list[VerseID] | None = None
+
+
+def load_all_translations(selection_criteria: SelectionCriteria = None, verse_parity: bool = True) -> list[Translation]:
     translations: list[Translation] = []
     missing_verses: list[tuple[str, int]] = []
 
+    if selection_criteria is None:
+        selection_criteria = SelectionCriteria()
+
     for filename in os.listdir("translations"):
         translation = Translation.from_filename(f"translations/{filename}")
+        if selection_criteria.languages and translation.language.iso not in selection_criteria.languages:
+            continue
+        if selection_criteria.translations and translation.edition_name not in selection_criteria.translations:
+            continue
 
         for chapter_name, length in CHAPTERS.items():
+            if selection_criteria.chapters and chapter_name not in selection_criteria.chapters:
+                continue
+
             chapter = translation.chapters[chapter_name]
             for i in range(length):
+                if selection_criteria.skip_verses and (chapter_name, i) in selection_criteria.skip_verses:
+                    continue
+
                 if chapter.verses[i] is None:
                     missing_verses.append((chapter_name, i))
                     print(f"{translation.name()} is missing {chapter_name}:{i + 1}")
 
         translations.append(translation)
 
-    return translations, missing_verses
+    if verse_parity:
+        for translation in translations:
+            for name, chapter in translation.chapters.items():
+                chapter.verses = [
+                    None if (name, i) in missing_verses else verse
+                    for i, verse in enumerate(chapter.verses)
+                ]
+
+    return translations
 
 
 EDGE_SEGMENT = Segment("#", None)
@@ -313,19 +339,31 @@ DEFAULT_N = 2
 MAX_N = 8
 
 
+def plot_data(data: list[tuple[Translation, list[float]]], title: str):
+    f, ax = plt.subplots(1)
+
+    for translation, values in data:
+        ax.plot(*zip(*list(enumerate(values))), label=translation.name())
+
+    plt.title(title)
+    ax.legend()
+    ax.set_ylim(ymin=0)
+    plt.show()
+
+
 def show_basic_stats():
     n = DEFAULT_N
 
-    translations, missing_verses = load_all_translations()
+    translations = load_all_translations()
     for translation in translations:
         print(translation.name())
 
-        segmented_words = translation.segments(missing_verses)
+        segmented_words = translation.segments()
         print(f"{len(segmented_words)} total words")
-        print(f"{len(list(translation.all_verses([])))} verses")
+        print(f"{len(list(translation.all_verses()))} verses")
 
         orthographic_words = set()
-        for verse in translation.all_verses(missing_verses):
+        for verse in translation.all_verses():
             orthographic_words |= set(verse.whitespace_words)
         print(f"{len(orthographic_words)} distinct orthographic words")
 
@@ -351,9 +389,9 @@ def show_basic_stats():
 
 
 def show_segmentation():
-    translations, missing_verses = load_all_translations()
+    translations = load_all_translations()
     for translation in translations:
-        verses = list(translation.all_verses(missing_verses))
+        verses = list(translation.all_verses())
         segmented_words = verses[0].segmented_words()
         print(translation.name())
         print(verses[0].content)
@@ -362,7 +400,7 @@ def show_segmentation():
 
 
 def show_bytes_per_segment(word_breaks: bool):
-    translations, missing_verses = load_all_translations()
+    translations = load_all_translations()
     data = [
         (translation, [])
         for translation in translations
@@ -371,7 +409,7 @@ def show_bytes_per_segment(word_breaks: bool):
     for n in range(0, MAX_N):
         for translation, bytes_per_segment in data:
             print(translation.name())
-            segmented_words = translation.segments(missing_verses, word_breaks)
+            segmented_words = translation.segments(word_breaks)
 
             num_segments = 0
             segment_freqs = {}
@@ -396,16 +434,11 @@ def show_bytes_per_segment(word_breaks: bool):
             print()
         print('---')
 
-    for translation, bytes_per_segment in data:
-        plt.plot(*zip(*list(enumerate(bytes_per_segment))), label=translation.name())
-
-    plt.title("Average bytes per segment by n")
-    plt.legend()
-    plt.show()
+    plot_data(data, "Average bytes per segment by n")
 
 
 def show_total_bytes(word_breaks: bool):
-    translations, missing_verses = load_all_translations()
+    translations = load_all_translations()
     data = [
         (translation, [])
         for translation in translations
@@ -415,7 +448,7 @@ def show_total_bytes(word_breaks: bool):
         print(f"n = {n}")
         print()
         for translation, total_bytes_list in data:
-            segmented_words = translation.segments(missing_verses, word_breaks)
+            segmented_words = translation.segments(word_breaks)
 
             ss = SegmentSummary()
             ss.add_all(segmented_words, n)
@@ -442,25 +475,20 @@ def show_total_bytes(word_breaks: bool):
 
         print()
 
-    for translation, total_bytes_list in data:
-        plt.plot(*zip(*list(enumerate(total_bytes_list))), label=translation.name())
-
-    plt.title("Total bytes by n")
-    plt.legend()
-    plt.show()
+    plot_data(data, "Total bytes by n")
 
 
 def show_first_segments():
     n = 1
 
-    translations, missing_verses = load_all_translations()
+    translations = load_all_translations()
 
     print("First segments")
     print()
 
     for translation in translations:
         print(translation.name())
-        segmented_words = translation.segments(missing_verses)
+        segmented_words = translation.segments()
 
         ss = SegmentSummary()
         ss.add_all(segmented_words, n)
@@ -481,14 +509,15 @@ def show_segment_position_bytes(word_breaks: bool):
     n = DEFAULT_N
     max_position = 15
 
-    translations, missing_verses = load_all_translations()
+    translations = load_all_translations()
 
+    data = []
     for translation in translations:
-        segmented_words = translation.segments(missing_verses, word_breaks)
+        segmented_words = translation.segments(word_breaks)
         ss = SegmentSummary()
         ss.add_all(segmented_words, n)
 
-        position_bytes = []
+        position_bytes: list[list[float]] = []
         for _ in range(max_position):
             position_bytes.append([])
 
@@ -507,20 +536,19 @@ def show_segment_position_bytes(word_breaks: bool):
             if not bs:
                 break
             avgs.append(statistics.mean(bs))
-        plt.plot(*zip(*list(enumerate(avgs))), label=translation.name())
+        data.append((translation, avgs))
 
-    plt.title(f"Average bytes for segment at word position (n = {n})")
-    plt.legend()
-    plt.show()
+    plot_data(data, f"Average bytes for segment at word position (n = {n})")
 
 
 def show_most_common_words():
     n = DEFAULT_N
-    translations, missing_verses = load_all_translations()
+    translations = load_all_translations()
+    data = []
     for translation in translations:
         print(translation.name())
         words = []
-        for verse in translation.all_verses(missing_verses):
+        for verse in translation.all_verses():
             words += verse.whitespace_words
         segmented_words = []
         for word in words:
@@ -542,11 +570,9 @@ def show_most_common_words():
 
         print()
 
-        plt.plot(*zip(*enumerate(word_bytes)), label=translation.name())
+        data.append((translation, word_bytes))
 
-    plt.title(f"Bytes of most common words (n = {n})")
-    plt.legend()
-    plt.show()
+    plot_data(data, f"Bytes of most common words (n = {n})")
 
 
 if __name__ == "__main__":
